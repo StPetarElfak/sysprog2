@@ -14,7 +14,7 @@ using System.Reflection;
 [assembly: System.Reflection.AssemblyCompanyAttribute("Zadatak36opet")]
 [assembly: System.Reflection.AssemblyConfigurationAttribute("Debug")]
 [assembly: System.Reflection.AssemblyFileVersionAttribute("1.0.0.0")]
-[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+f327fcf261473d920b053f8915010eb6ee74f0e0")]
+[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+51d83086c3c13f48f890ec6a225fa7cfc8a59ac6")]
 [assembly: System.Reflection.AssemblyProductAttribute("Zadatak36opet")]
 [assembly: System.Reflection.AssemblyTitleAttribute("Zadatak36opet")]
 [assembly: System.Reflection.AssemblyVersionAttribute("1.0.0.0")]

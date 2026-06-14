@@ -12,23 +12,23 @@ namespace Zadatak36
         private HttpListener listener;
         private int port;
         private bool radi;
-        private int maxNiti;
         private int brojNiti;
         private object bravaBrojNiti;
         private static readonly ConcurrentDictionary<string, CacheUnos> cache = new();
         private static readonly ConcurrentDictionary<string, SemaphoreSlim> semafori = new();
         private static int maxUnosa = 10;
+        private static List<string> podrzaniTipovi = new List<string> { ".jpg", ".jpeg", ".gif", ".bmp", ".exif", ".png", ".tiff" };
         public Server(int port, int maxNiti)
         {
             this.port = port;
             listener = new HttpListener();
             listener.Prefixes.Add($"http://localhost:{port}/");
             radi = false;
-            this.maxNiti = maxNiti;
+            ThreadPool.SetMaxThreads(maxNiti, maxNiti);
             brojNiti = 0;
             bravaBrojNiti = new object();
         }
-        public void Pokreni()
+        public async void Pokreni()
         {
             radi = true;
             listener.Start();
@@ -38,35 +38,8 @@ namespace Zadatak36
                 try
                 {
                     HttpListenerContext context = listener.GetContext();
-                    if (brojNiti <= maxNiti)
-                    {
-                        lock (bravaBrojNiti)
-                        {
-                            brojNiti++;
-                        }
-                        Logger.Log("Primljen novi zahtev");
-                        ThreadPool.QueueUserWorkItem(ObradaZahteva, context);
-                    }
-                    else
-                    { 
-                        Logger.Log($"Maksimalan broj niti dostignut");
-                        context.Response.StatusCode = (int)HttpStatusCode.ServiceUnavailable;
-                        byte[] poruka = Encoding.UTF8.GetBytes("Maksimalan broj niti dostignut");
-
-                        context.Response.ContentType = "text/plain; charset=utf-8";
-                        context.Response.ContentLength64 = poruka.Length;
-                        try
-                        {
-                            using (var output = context.Response.OutputStream)
-                            {
-                                output.Write(poruka, 0, poruka.Length);
-                            }
-                        }
-                        finally
-                        {
-                            context.Response.Close();
-                        }
-                    }
+                    Logger.Log("Primljen novi zahtev");
+                    await ObradaZahteva(context);
                 }
                 catch (HttpListenerException) when (!radi)
                 {
@@ -78,67 +51,78 @@ namespace Zadatak36
                 }
             }
         }
-        private void ObradaZahteva(object request)
+        private async Task ObradaZahteva(object request)
         {
             var context = (HttpListenerContext)request;
             var vremeObrade = Stopwatch.StartNew();
             try
             {
                 string naziv = context.Request.Url.AbsolutePath.TrimStart('/');
-                string pragString = HttpUtility.ParseQueryString(context.Request.Url.Query).Get("prag");
-                byte prag = Byte.Parse(pragString);
-                string key = naziv + pragString;
-                Logger.Log($"Zahtev za binarizacijom: {naziv}, prag={pragString}");
-                CacheUnos unos;
-                if (cache.TryGetValue(key, out unos))
+                string ex = Path.GetExtension(naziv);
+                if (ex == ".ico")
                 {
-                    Logger.Log($"Nadjen u kesu: {key}");
-                    PostaviIzKesa(naziv, prag, context, unos);
+                    context.Response.StatusCode = 204;
+                    Logger.Log("favicon.ico request, poslat prazan odgovor");
                 }
-                else
+                else if (podrzaniTipovi.Contains(ex))
                 {
-                    var fileLock = semafori.GetOrAdd(key, x => new SemaphoreSlim(1, 1));
-                    fileLock.Wait();
-                    try
+                    string? pragString = HttpUtility.ParseQueryString(context.Request.Url.Query).Get("prag");
+                    if (pragString == null) throw (new Exception("Prag nije naznacen"));
+                    byte prag = Byte.Parse(pragString);
+                    string key = naziv + pragString;
+                    Logger.Log($"Zahtev za binarizacijom: {naziv}, prag={pragString}");
+                    CacheUnos? unos;
+                    if (cache.TryGetValue(key, out unos))
                     {
-                        if (cache.TryGetValue(key, out unos))
+                        Logger.Log($"Nadjen u kesu: {key}");
+                        await PostaviIzKesa(naziv, prag, context, unos);
+                    }
+                    else
+                    {
+                        var fileLock = semafori.GetOrAdd(key, x => new SemaphoreSlim(1, 1));
+                        fileLock.Wait();
+                        try
                         {
-                            Logger.Log($"Nadjen u kesu: {key}");
-                            PostaviIzKesa(naziv, prag, context, unos);
+                            if (cache.TryGetValue(key, out unos))
+                            {
+                                Logger.Log($"Nadjen u kesu: {key}");
+                                await PostaviIzKesa(naziv, prag, context, unos);
+                            }
+                            else await BinarizujIPostavi(naziv, prag, context);
                         }
-                        else BinarizujIPostavi(naziv, prag, context);
-                    }
-                    finally
-                    {
-                        fileLock.Release();
+                        finally
+                        {
+                            fileLock.Release();
+                        }
                     }
                 }
+                else throw (new NotSupportedException("Tip fajla nije podrzan"));
             }
 
             catch (FileNotFoundException e)
             {
                 Logger.Log($"Fajl ne postoji: {e.Message}");
-                PosaljiGresku(context, e.Message, HttpStatusCode.NotFound);
+                await PosaljiGresku(context, e.Message, HttpStatusCode.NotFound);
             }
             catch (NotSupportedException e)
             {
                 Logger.Log($"fajl nije podrzan: {e.Message}");
-                PosaljiGresku(context, e.Message, HttpStatusCode.NotFound);
+                await PosaljiGresku(context, e.Message, HttpStatusCode.NotFound);
             }
             catch (Exception e)
             {
                 Logger.Log($"Neka greska: {e.Message}");
-                PosaljiGresku(context, e.Message, HttpStatusCode.InternalServerError);
+                await PosaljiGresku(context, e.Message, HttpStatusCode.InternalServerError);
             }
             finally
             {
                 vremeObrade.Stop();
-                Logger.Log($"Vreme obrade: {vremeObrade.ElapsedMilliseconds}ms");
+                Logger.Log($"Vreme obrade zahteva {context.Request.Url}: {vremeObrade.ElapsedMilliseconds}ms\n");
                 lock (bravaBrojNiti) brojNiti--;
                 context.Response.Close();
             }
         }
-        private void PostaviIzKesa(string naziv, byte prag, HttpListenerContext context, CacheUnos cacheUnos)
+        private static async Task PostaviIzKesa(string naziv, byte prag, HttpListenerContext context, CacheUnos cacheUnos)
         {
             cache[naziv+prag].LastUsed = DateTime.Now;
             context.Response.ContentType = cacheUnos.ContentType;
@@ -146,29 +130,37 @@ namespace Zadatak36
             context.Response.StatusCode = (int)HttpStatusCode.OK;
             using (var output = context.Response.OutputStream)
             {
-                output.Write(cacheUnos.Data, 0, cacheUnos.Data.Length);
+                await output.WriteAsync(cacheUnos.Data, 0, cacheUnos.Data.Length);
             }
             Logger.Log($"Fajl postavljen iz kesa: {naziv}");
         }
-        private void BinarizujIPostavi(string naziv, byte prag, HttpListenerContext context)
+        private async Task BinarizujIPostavi(string naziv, byte prag, HttpListenerContext context)
         {
             byte[] data;
             Logger.Log($"Nije nadjen u kesu, vrsi se binarizacija: {naziv}, prag={prag}");
-            Binarizator.Binarizuj(naziv, prag, out data);
-            string extension = Path.GetExtension(naziv);
-            string contentType = "image/" + extension.TrimStart('.');
-            CacheUnos zaUneti = new CacheUnos(data, contentType);
-            UnesiUCache(naziv + prag, zaUneti);
-            context.Response.ContentType = contentType;
-            context.Response.ContentLength64 = data.Length;
-            context.Response.StatusCode = (int)HttpStatusCode.OK;
-            using (var output = context.Response.OutputStream)
+            var b = Binarizator.Binarizuj(naziv, prag);
+            await b.ContinueWith(async antecedent =>
             {
-                output.Write(data, 0, data.Length);
-            }
-            Logger.Log($"Fajl binarizovan: {naziv}");
+                if (antecedent.Status == TaskStatus.RanToCompletion)
+                {
+                    byte[] data = antecedent.Result;
+                    string extension = Path.GetExtension(naziv);
+                    string contentType = "image/" + extension.TrimStart('.');
+                    CacheUnos zaUneti = new CacheUnos(data, contentType);
+                    UnesiUCache(naziv + prag, zaUneti);
+                    context.Response.ContentType = contentType;
+                    context.Response.ContentLength64 = data.Length;
+                    context.Response.StatusCode = (int)HttpStatusCode.OK;
+                    using (var output = context.Response.OutputStream)
+                    {
+                        await output.WriteAsync(data, 0, data.Length);
+                    }
+                    Logger.Log($"Fajl binarizovan: {naziv}");
+                }
+            });
+            
         }
-        private void PosaljiGresku(HttpListenerContext context, string poruka, HttpStatusCode code)
+        private async Task PosaljiGresku(HttpListenerContext context, string poruka, HttpStatusCode code)
         {
             try
             {
@@ -178,7 +170,7 @@ namespace Zadatak36
                 context.Response.StatusCode = (int)code;
                 using (Stream output = context.Response.OutputStream)
                 {
-                    output.Write(porukaUBajtovima, 0, porukaUBajtovima.Length);
+                    await output.WriteAsync(porukaUBajtovima, 0, porukaUBajtovima.Length);
                 }
             }
             catch (Exception e)

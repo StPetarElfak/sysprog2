@@ -1,7 +1,6 @@
 ﻿using System.Collections.Concurrent;
 using System.Drawing;
 
-
 namespace Zadatak36
 {
     public class Binarizator
@@ -9,7 +8,7 @@ namespace Zadatak36
         //ovaj path je takav jer je trenutni folder kad debagujem u bin/debug/net8.0 folderu
         //po potrebi moze da se promeni ili da se premesti folder
         private static string path = "..\\..\\..\\Slike\\";
-        public static void Binarizuj(string naziv, byte prag, out byte[] data)
+        public static async Task<byte[]> Binarizuj(string naziv, byte prag)
         {
             Bitmap image;
             try
@@ -32,13 +31,13 @@ namespace Zadatak36
                 using (stream)
                 {
                     image.Save(stream, image.RawFormat);
-                    data = stream.ToArray();
+                    return stream.ToArray();
                 }
             }
             catch (ArgumentException e)
             {
                 Console.WriteLine("Greska pri binarizaciji: " + e);
-                data = new byte[0];
+                return new byte[0];
             }
         }
     }
