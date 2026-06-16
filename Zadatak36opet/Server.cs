@@ -39,7 +39,7 @@ namespace Zadatak36
                 {
                     HttpListenerContext context = listener.GetContext();
                     Logger.Log("Primljen novi zahtev");
-                    await ObradaZahteva(context);
+                    Task.Run(() => ObradaZahteva(context));
                 }
                 catch (HttpListenerException) when (!radi)
                 {
